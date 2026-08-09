@@ -1,0 +1,19 @@
+{
+  "name": "Sprinter — 100 m et 200 m",
+  "short_name": "Sprinter",
+  "description": "Six etapes, de la competition scolaire au niveau inter galactique.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "any",
+  "background_color": "#0b0c16",
+  "theme_color": "#0b0c16",
+  "lang": "fr",
+  "categories": ["games", "sports"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
