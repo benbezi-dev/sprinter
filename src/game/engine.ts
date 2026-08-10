@@ -11,6 +11,7 @@ export const SprinterApp = (globalThis as any).SprinterApp;
 // consumers can destructure either object.
 SprinterApp.RACES = SprinterCore.RACES;
 SprinterApp.LEVELS = SprinterCore.LEVELS;
+SprinterApp.C = SprinterCore.C;
 
 export type GameState = {
   state: 'open' | 'title' | 'cut' | 'count' | 'race' | 'result' | 'over' | 'winall';
