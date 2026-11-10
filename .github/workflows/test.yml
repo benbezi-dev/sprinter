@@ -1,0 +1,169 @@
+name: Versions de test
+
+# LES VERSIONS DE TEST DE SPRINTER, SORTIES DU SITE DU JEU (10/11/2026, l'auteur :
+# « deplace la partie test pour alleger le jeu »).
+#
+# Le code reste dans benbezi-dev/sprinter-game : ce depot-ci ne fait que le construire
+# en canal de test et le publier sur SA page GitHub, a part du jeu des joueurs :
+#   https://benbezi-dev.github.io/sprinter/test/    (main de sprinter-game)
+#   https://benbezi-dev.github.io/sprinter/test3d/  (branche test-ferme/course-3d)
+# La porte a code est la meme qu'avant : VITE_CANAL=test, aucun joueur n'y entre.
+#
+# QUAND CA SE PUBLIE
+# - a chaque deploiement du jeu, si sprinter-game a le secret SPRINTER_TEST_TOKEN
+#   (il envoie alors un « repository_dispatch » ici) ;
+# - sinon toutes les demi-heures : on compare les commits de sprinter-game a ceux
+#   deja publies (version.txt), et l'on ne reconstruit que s'ils ont change ;
+# - a la main : onglet Actions > Versions de test > Run workflow.
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [deployer-test]
+  schedule:
+    - cron: '*/30 * * * *'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  JEU: benbezi-dev/sprinter-game
+  BRANCHE_3D: test-ferme/course-3d
+  SITE: https://benbezi-dev.github.io/sprinter
+
+jobs:
+  verifier:
+    runs-on: ubuntu-latest
+    outputs:
+      construire: ${{ steps.v.outputs.construire }}
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        run: |
+          main=$(git ls-remote "https://github.com/$JEU" refs/heads/main | cut -f1)
+          b3d=$(git ls-remote "https://github.com/$JEU" "refs/heads/$BRANCHE_3D" | cut -f1)
+          version="main=$main 3d=${b3d:-aucune}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          publie=$(curl -fsS "$SITE/version.txt" 2>/dev/null || true)
+          echo "publie : $publie"
+          echo "actuel : $version"
+          if [ "${{ github.event_name }}" != "schedule" ] || [ "$publie" != "$version" ]; then
+            echo "construire=oui" >> "$GITHUB_OUTPUT"
+          else
+            echo "construire=non" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: verifier
+    if: needs.verifier.outputs.construire == 'oui'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: benbezi-dev/sprinter-game
+          ref: main
+          path: jeu
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # La version de test : main de sprinter-game, en canal de test.
+      - name: Construire la version de test
+        working-directory: jeu
+        env:
+          BASE_PATH: /sprinter/test/
+          VITE_CANAL: test
+        run: |
+          npm install
+          npx vite build --outDir dist-test
+          node -e '
+            const f = "dist-test/manifest.webmanifest";
+            const m = JSON.parse(require("fs").readFileSync(f, "utf8"));
+            const base = "/sprinter/test/";
+            m.name = "Sprinter — test";
+            m.short_name = "Sprinter test";
+            m.id = base; m.scope = base; m.start_url = ".";
+            require("fs").writeFileSync(f, JSON.stringify(m, null, 2));
+          '
+          mkdir -p "$GITHUB_WORKSPACE/site"
+          mv dist-test "$GITHUB_WORKSPACE/site/test"
+
+      # La branche de test 3D. Si elle n'existe plus, l'etape ne fait rien.
+      - name: Construire la branche de test 3D
+        working-directory: jeu
+        env:
+          BASE_PATH: /sprinter/test3d/
+          VITE_CANAL: test
+        run: |
+          git fetch --depth 1 origin "$BRANCHE_3D" || { echo "pas de branche test 3D"; exit 0; }
+          git worktree add ../course-3d FETCH_HEAD
+          cd ../course-3d
+          npm install
+          npx vite build --outDir dist-test3d
+          node -e '
+            const f = "dist-test3d/manifest.webmanifest";
+            const m = JSON.parse(require("fs").readFileSync(f, "utf8"));
+            const base = "/sprinter/test3d/";
+            m.name = "Sprinter — test 3D";
+            m.short_name = "Sprinter 3D";
+            m.id = base; m.scope = base; m.start_url = ".";
+            require("fs").writeFileSync(f, JSON.stringify(m, null, 2));
+          '
+          mv dist-test3d "$GITHUB_WORKSPACE/site/test3d"
+
+      # La racine et le repli renvoient a la version de test ; version.txt dit ce qui est
+      # publie (lu par la verification des demi-heures).
+      - name: Racine, repli et version
+        run: |
+          cat > site/index.html <<'EOF'
+          <!doctype html><meta charset="utf-8"><meta name="robots" content="noindex">
+          <title>Sprinter — test</title>
+          <script>location.replace('/sprinter/test/' + location.search + location.hash)</script>
+          <a href="/sprinter/test/">Sprinter — test</a> · <a href="/sprinter/test3d/">test 3D</a>
+          EOF
+          cp site/index.html site/404.html
+          echo -n "${{ needs.verifier.outputs.version }}" > site/version.txt
+          du -sh site site/*
+
+      # Cloudflare Pages a recu jusqu'ici la version 3D complete. Il ne publie ici que si
+      # ce depot a les secrets CLOUDFLARE_API_TOKEN et CLOUDFLARE_ACCOUNT_ID ; sinon
+      # l'etape passe sans rien faire. Projet `sprinter-test` (sprinter-test.pages.dev).
+      - name: Publier sur Cloudflare Pages (si configure)
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || { echo "pas de secrets Cloudflare ici"; exit 0; }
+          npx --yes wrangler@4 pages project create sprinter-test --production-branch main || true
+          npx --yes wrangler@4 pages deploy site --project-name sprinter-test --branch main --commit-dirty=true
+
+      # GitHub Pages est plafonne vers 1 Go : la version 3D y laisse les stades ultra, la
+      # bete pleine et les medias anglais du molosse (~160 Mo), comme avant.
+      - name: Alleger la version 3D pour GitHub Pages
+        run: |
+          rm -rf site/test3d/modeles/stades-ultra site/test3d/modeles/boss-plein site/test3d/decors-ultra/halloween-* site/test3d/halloween/*-en.mp4 site/test3d/halloween/*-en.jpg site/test3d/halloween/*-en.webp
+          # /test/ complet (~670 Mo) + /test3d/ allege (~220 Mo) : sous le plafond, mais de peu.
+          octets=$(du -sb site | cut -f1)
+          echo "GitHub Pages : $octets octets"
+          [ "$octets" -le 1000000000 ] || { echo "::error::Au-dessus d'1 Go : alleger /test/ aussi (meme liste que /test3d/)"; exit 1; }
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
